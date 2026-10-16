@@ -1,0 +1,68 @@
+#!/bin/bash
+
+# 🧭 极客生活助手：[douyin] 一键极速短视频自动裁剪与挡脸指令
+
+# 获取当前脚本所在绝对路径
+PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+VENV_PYTHON="/Users/jojo/.workbuddy/binaries/python/envs/venv_3.9/bin/python"
+
+# 自动建立输入与输出文件夹
+INPUT_DIR="$PROJECT_DIR/input_videos"
+OUTPUT_DIR="$PROJECT_DIR/output_videos"
+mkdir -p "$INPUT_DIR"
+mkdir -p "$OUTPUT_DIR"
+
+INPUT_FILE=""
+
+# 1. 解析参数
+if [ -n "$1" ]; then
+    # 如果用户指定了具体的文件路径，则处理该文件
+    INPUT_FILE="$1"
+else
+    # 2. 如果未指定参数，自动寻找 input_videos 文件夹中最新存入的视频 (.mp4 / .mov / .MP4 / .MOV)
+    # 采用 ls -t 按修改时间排序，head -n 1 拿最新的一条
+    LATEST_VIDEO=$(ls -t "$INPUT_DIR"/*.mp4 "$INPUT_DIR"/*.mov "$INPUT_DIR"/*.MP4 "$INPUT_DIR"/*.MOV 2>/dev/null | head -n 1)
+    if [ -n "$LATEST_VIDEO" ]; then
+        INPUT_FILE="$LATEST_VIDEO"
+        echo "🧭 发现最新存入的视频输入: $(basename "$INPUT_FILE")"
+    else
+        echo "❌ 错误: 未在 'input_videos' 文件夹中检测到任何视频！"
+        echo "   保姆级指引：请将您从手机 Airdrop 过来的原视频，直接丢入这个文件夹下："
+        echo "   📂 路径：$INPUT_DIR"
+        echo "   然后再次在项目根目录下运行: ./douyin 即可！"
+        # 顺便帮用户打开输入文件夹，体感拉满
+        open "$INPUT_DIR"
+        exit 1
+    fi
+fi
+
+# 3. 自动匹配追踪模式（如果有第二个参数，默认支持选 mode 比如 pan_zoom）
+TRACK_MODE="pan_only"
+if [ "$2" == "zoom" ]; then
+    TRACK_MODE="pan_zoom"
+    echo "🎯 追踪模式：居中锁定拉伸变焦 (pan_zoom)"
+fi
+
+# 4. 生成统一的输出路径
+BASE_NAME=$(basename "$INPUT_FILE")
+OUTPUT_FILE="$OUTPUT_DIR/${BASE_NAME%.*}_vertical.mp4"
+
+echo "============================================================"
+echo "🧭 [douyin] 极速 AI 处理流水线启动..."
+echo "   原始视频: $INPUT_FILE"
+echo "   导出竖屏: $OUTPUT_FILE"
+echo "============================================================"
+
+# 5. 执行 Python 主算法核心
+"$VENV_PYTHON" "$PROJECT_DIR/main.py" -i "$INPUT_FILE" -o "$OUTPUT_FILE" -m "$TRACK_MODE"
+
+if [ $? -eq 0 ]; then
+    echo "============================================================"
+    echo "🎉 处理成功！军师已自动为您打开输出文件夹。"
+    echo "   您可以直接选中 [$(basename "$OUTPUT_FILE")] 并右键点击“分享 -> 隔空投送 (AirDrop)”传回您的 iPhone 啦！"
+    echo "============================================================"
+    # 6. 处理成功后自动帮用户打开输出目录的 Finder，直接进行隔空投送
+    open "$OUTPUT_DIR"
+else
+    echo "❌ AI 处理出现异常，请检查上方日志报错信息。"
+fi

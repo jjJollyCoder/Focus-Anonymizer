@@ -1,0 +1,63 @@
+# 🧭 极客生活助手：短视频自动裁剪与挡脸工具 隐私及防爆 Git 忽略配置
+
+# macOS 系统冗余文件
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon
+._*
+
+# Python 虚拟环境与运行时编译缓存
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# 媒体输入与输出资源库 (绝对防止大视频及亲子隐私误传至 GitHub ⚠️)
+input_videos/
+output_videos/
+*.mp4
+*.mov
+*.MP4
+*.MOV
+*.avi
+*.mkv
+temp_silent_*
+
+# 图片缓存与临时预览图 (防止指认截图及临时缓存外泄)
+*.png
+*.jpg
+*.jpeg
+*.heic
+*.HEIC
+*.JPG
+*.PNG
+# 排除 assets 目录，保留项目的公共内置静态图（如默认遮挡贴纸等）
+!assets/
+!assets/**
+
+# 重型神经网络模型权重（自动下载，无需上传 Git）
+*.pt
+yolov8n.pt
+
+# 二进制大型工具包（如内置的静态 FFmpeg，30MB+ 避免塞爆 GitHub 仓库）
+bin/
