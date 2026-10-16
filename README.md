@@ -41,7 +41,7 @@ brew install ffmpeg
 
 ```bash
 # 1. 进到项目根目录
-cd /Users/jojo/Downloads/short_video_automation
+cd /short_video_automation
 
 # 2. 一秒开启体验
 ./douyin
