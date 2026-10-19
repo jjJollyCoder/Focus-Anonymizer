@@ -1,7 +1,6 @@
 import cv2
 import numpy as np
 import torch
-import os
 from config import *
 from utils import MovingAverageFilter
 
@@ -51,6 +50,10 @@ class ReframeTracker:
         self.all_candidates = []
         self.is_initialized = False
         self.select_index = select_index
+        
+        # 🚀 【神级性能提升：YOLO 隔帧检测参数】
+        self.frame_counter = 0
+        self.detect_interval = 2  # 🧭 每 2 帧跑一次 YOLO 检测，CPU 负荷瞬间暴降 50%！
 
     def reset_tracking(self, preserve_last_bbox=True):
         self.prev_center_x = None
@@ -60,14 +63,19 @@ class ReframeTracker:
         if not preserve_last_bbox:
             self.last_bbox = None
             self.is_initialized = False
+            self.frame_counter = 0
 
     def detect_and_track_person(self, frame):
-        """利用多维空间评分系统(IoU+尺寸+距离)，并配以惰性维持，解决低头转身与镜头快速横移时的跟丢问题"""
+        """利用 YOLO 隔帧自适应检测 + 多维打分 + 惰性维持，榨干 CPU 最后一滴极限算力"""
+        self.frame_counter += 1
+        
+        # 🚀 隔帧快速通道：如果是跳过的帧，且已经完成初始化，直接复用上一帧结果，100% 豁免 YOLO 推理！
+        if self.is_initialized and (self.frame_counter % self.detect_interval != 0):
+            return self.last_bbox
+
         img_h, img_w, _ = frame.shape
         
-        # 🚀 【神级性能优化：降采样特征提取】 🚀
-        # 4K 图像（3840x2160）对 YOLO 而言太重了，且 YOLO 内部也会自动 resize。
-        # 我们先主动等比缩放到 960x540，运算像素骤降 16 倍，直接让 CPU 检测速度提升 4-5 倍！
+        # 降采样特征提取：960x540 运算像素骤降 16 倍，直接让 CPU 检测速度提升 4-5 倍！
         detect_w, detect_h = 960, 540
         scale_x = img_w / detect_w
         scale_y = img_h / detect_h
@@ -82,7 +90,6 @@ class ReframeTracker:
             conf = box.conf[0].item()
             if cls_id == PERSON_CLASS_ID and conf >= CONFIDENCE_THRESHOLD:
                 xyxy = box.xyxy[0].cpu().numpy()
-                # 🚀 完美按比例映射回 4K 原图绝对坐标，保障后续裁剪框的超高清晰度！
                 xyxy_scaled = np.array([
                     xyxy[0] * scale_x,
                     xyxy[1] * scale_y,
@@ -161,7 +168,6 @@ class ReframeTracker:
                 best_score = -1e9
                 best_candidate = None
                 
-                # 设定严格的位移物理门控：在 1/30 秒内，人体的中心点位移不可能超过其自身高度的 45%
                 max_gate_distance = prev_h * 0.45
                 
                 for xy in candidates:
@@ -169,24 +175,17 @@ class ReframeTracker:
                     curr_h = xy[3] - xy[1]
                     curr_center = np.array([(xy[0] + xy[2])/2, (xy[1] + xy[3])/2])
                     
-                    # 1. 计算 IoU
                     iou = calculate_iou(xy, self.last_bbox)
-                    
-                    # 2. 计算位移物理距离
                     dist = np.linalg.norm(curr_center - prev_center)
                     
-                    # 门控：如果位移超出合理运动范围且没有重合度，直接过滤掉，防止跳变到旁人
                     if dist > max_gate_distance and iou < 0.15:
                         continue
                         
                     norm_dist = dist / max(1.0, prev_h)
-                    
-                    # 3. 计算体型相似度
                     size_ratio_w = min(curr_w, prev_w) / max(1.0, curr_w, prev_w)
                     size_ratio_h = min(curr_h, prev_h) / max(1.0, curr_h, prev_h)
                     size_similarity = (size_ratio_w + size_ratio_h) / 2.0
                     
-                    # 4. 多维加权打分：高 IoU 优先，大距离扣分，体型突变扣分
                     score = iou * 6.0 + size_similarity * 2.5 - norm_dist * 2.5
                     
                     if score > best_score:
@@ -197,9 +196,8 @@ class ReframeTracker:
                     self.last_bbox = best_candidate
                     self.lost_frames_count = 0
                 else:
-                    # 🚀 【极客惰性维持（Coasting）】：我低头/转身导致 YOLO 没认出来我，我们保持上一帧的位置不动，拒绝换人！
                     self.lost_frames_count = getattr(self, "lost_frames_count", 0) + 1
-                    if self.lost_frames_count > 15:  # 连续 15 帧（约 0.5 秒）跟丢则允许清空重新指认
+                    if self.lost_frames_count > 15:  # 连续 15 帧跟丢重新初始化
                         self.is_initialized = False
                         self.last_bbox = None
             
