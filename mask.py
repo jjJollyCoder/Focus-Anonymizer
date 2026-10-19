@@ -3,13 +3,16 @@ import numpy as np
 from config import *
 
 def calculate_iou(boxA, boxB):
+    """计算两个边界框的 Intersection over Union (IoU) 交并比"""
     xA = max(boxA[0], boxB[0])
     yA = max(boxA[1], boxB[1])
     xB = min(boxA[2], boxB[2])
     yB = min(boxA[3], boxB[3])
+    
     interArea = max(0, xB - xA) * max(0, yB - yA)
     boxAArea = (boxA[2] - boxA[0]) * (boxA[3] - boxA[1])
     boxBArea = (boxB[2] - boxB[0]) * (boxB[3] - boxB[1])
+    
     unionArea = boxAArea + boxBArea - interArea
     if unionArea == 0:
         return 0
@@ -17,7 +20,7 @@ def calculate_iou(boxA, boxB):
 
 class FaceMasker:
     def __init__(self):
-        print("🧭 军师提醒：坐标与 IoU 双重安全锁定遮罩加载成功！")
+        print("🧭 军师提醒：0.35 宽门限 IoU 安全锁定遮罩已加载！")
 
     def apply_face_masks(self, frame, all_candidates, my_bbox, crop_box):
         if not all_candidates:
@@ -36,13 +39,13 @@ class FaceMasker:
             if body_w <= 0 or body_h <= 0:
                 continue
                 
-            # 🚀 【极速高精度过滤我本人】：
+            # 🚀 【极速、超高精度过滤我本人（防双重重叠误伤我自己的脸）】：
             if my_bbox is not None:
-                # 1. 坐标严格重合（代表这是同一帧中 YOLO 分配给我的候选框）
+                # 1. 坐标严格重合（同一物体直接跳过）
                 if np.allclose(bbox, my_bbox, atol=2.0):
                     continue
-                # 2. 或者交并比重合度极高（安全冗余）
-                if calculate_iou(bbox, my_bbox) > 0.8:
+                # 2. 🚀 降维优化：只要任何重合框与我本人的 IoU 大于 0.35，即断定为我自己的双重冗余框，100% 豁免模糊！
+                if calculate_iou(bbox, my_bbox) > 0.35:
                     continue
 
             # 视口空间坐标映射
