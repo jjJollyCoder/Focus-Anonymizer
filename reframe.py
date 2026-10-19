@@ -1,11 +1,12 @@
 import cv2
 import numpy as np
 import torch
+import os
 from config import *
 from utils import MovingAverageFilter
 
 class ReframeTracker:
-    def __init__(self):
+    def __init__(self, select_index=None):
         # 1. 自动选择最佳算力后端 (仅在 Apple Silicon M 系列芯片上启用 MPS，Intel Mac 强制采用 CPU)
         import platform
         is_intel = platform.machine() == "x86_64"
@@ -38,8 +39,11 @@ class ReframeTracker:
         # 记录当前帧检测到的所有人体 Bounding Box，用于一键联动模糊挡脸，规避双重 YOLO 加载
         self.all_candidates = []
         
-        # 记录是否完成了首帧的主体锁定（Scheme 2：交互指指标签）
+        # 记录是否完成了首帧的主体锁定（Scheme 2：交互指认标签）
         self.is_initialized = False
+        
+        # 记录由外部传入的指定编号（Headless 模式下免交互）
+        self.select_index = select_index
 
     def reset_tracking(self, preserve_last_bbox=True):
         """场景切换或重置时清空跟踪历史，防止跨场景过渡发生瞬间跳变"""
@@ -81,6 +85,12 @@ class ReframeTracker:
                 self.last_bbox = candidates[0]
                 self.is_initialized = True
                 print("🧭 军师检测：画面中只有 1 个人物，已自动锁定该主体！")
+            elif self.select_index is not None:
+                # 🚀 降维优化：如果由外部 Agent (如 MCP) 直接指定了指认编号，直接锁定该编号！
+                sel_idx = min(len(candidates) - 1, max(0, self.select_index))
+                self.last_bbox = candidates[sel_idx]
+                self.is_initialized = True
+                print(f"🎯 [Headless Mode] 已根据传入参数，直接将候选人 [{sel_idx}] 绑定为您的追踪主体！")
             else:
                 # 画面有多个候选人，进行交互式指认！
                 print(f"\n🧭 军师检测到画面中共有 {len(candidates)} 个人物。")
@@ -153,11 +163,7 @@ class ReframeTracker:
         return self.last_bbox
 
     def calculate_crop_box(self, frame, mode="pan_only"):
-        """
-        根据追踪到的人物计算 9:16 的裁剪区域。
-        mode = "pan_only": 仅做横向平移，高度保持100%原图（最稳定、画质最高）。
-        mode = "pan_zoom": 平移+拉伸缩放，始终保持人物在画面中的垂直占比恒定（复刻剪映“人物居中锁定”）。
-        """
+        """根据追踪到的人物计算 9:16 的裁剪区域。"""
         img_h, img_w, _ = frame.shape
         bbox = self.detect_and_track_person(frame)
         
@@ -165,7 +171,6 @@ class ReframeTracker:
         aspect_ratio = 9 / 16
         
         if bbox is None:
-            # 极限兜底：如果没有检测到人，默认对齐物理中心
             center_x = img_w / 2
             center_y = img_h / 2
             crop_h = img_h
@@ -177,31 +182,26 @@ class ReframeTracker:
             person_h = by2 - by1
             
             if mode == "pan_only":
-                # 仅平移：高度为视频全高，宽度按照 9:16 换算
                 crop_h = img_h
                 crop_w = int(img_h * aspect_ratio)
                 center_x = person_cx
                 center_y = img_h / 2
             else: # pan_zoom
-                # 居中锁定：假设让人物高度始终在画面中占比 55%
                 target_person_ratio = 0.55
                 crop_h = int(person_h / target_person_ratio)
-                # 限制裁剪框不能超过视频本身的边界
                 crop_h = min(img_h, max(int(img_h * 0.4), crop_h)) 
                 crop_w = int(crop_h * aspect_ratio)
                 
                 center_x = person_cx
                 center_y = person_cy
 
-        # 2. 惯性缓动平滑 (Lerp - Linear Interpolation)
-        # 如果是第一帧，直接初始化镜头坐标
+        # 2. 惯性缓动平滑 (Lerp)
         if self.prev_center_x is None:
             self.prev_center_x = center_x
             self.prev_center_y = center_y
             self.prev_crop_w = crop_w
             self.prev_crop_h = crop_h
         
-        # 缓动系数 (Easing factor): 越小越缓和/平滑，越大越紧跟。0.06 是电影感慢速平滑推移镜头的黄金系数
         easing_factor = 0.06
         
         scx = self.prev_center_x + easing_factor * (center_x - self.prev_center_x)
@@ -214,12 +214,10 @@ class ReframeTracker:
         self.prev_crop_w = scw
         self.prev_crop_h = sch
 
-        # 3. 边界处理，确保裁剪区域不超出原始图像物理宽度和高度
-        # 计算左上角起点 (x1, y1)
+        # 3. 边界处理
         cx1 = int(scx - scw / 2)
         cy1 = int(scy - sch / 2)
         
-        # 边界校正与对齐
         if cx1 < 0:
             cx1 = 0
         if cy1 < 0:
@@ -229,7 +227,6 @@ class ReframeTracker:
         if cy1 + sch > img_h:
             cy1 = img_h - sch
 
-        # 再次确保长宽为偶数（FFmpeg 及部分视频播放器对奇数长宽可能不兼容）
         scw = (scw // 2) * 2
         sch = (sch // 2) * 2
         
